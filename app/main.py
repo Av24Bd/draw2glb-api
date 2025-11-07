@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict
 
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, UploadFile, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import StreamingResponse, JSONResponse
 
@@ -31,16 +31,25 @@ else:
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allow_origins,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_credentials=False,     # keep false while using "*" origins
+    allow_methods=["*"],         # allow POST/OPTIONS/etc.
+    allow_headers=["*"],         # allow content-type/authorization
+    expose_headers=["*"],
+    max_age=86400,               # cache preflight (OPTIONS) for 24h
 )
+
+# Universal preflight handler so OPTIONS never 404s (some proxies can drop it)
+@app.options("/{rest_of_path:path}")
+def preflight_ok(rest_of_path: str):
+    # CORS middleware will add the necessary Access-Control-* headers.
+    return Response(status_code=204)
 
 # -----------------------------------------------------------------------------
 # Health
 # -----------------------------------------------------------------------------
 @app.get("/health")
 def health() -> Dict[str, bool]:
+    # simple warm-up target used by the frontend before first POST
     return {"ok": True}
 
 # -----------------------------------------------------------------------------
@@ -73,8 +82,10 @@ async def parse(payload: Dict[str, Any]):
 
     if p.suffix.lower() == ".pdf":
         parsed = parse_pdf_dims(p.read_bytes(), hard_limit_s=20)
-        print(f"[parse] took {round(time.time()-t0, 2)}s -> {parsed.get('dims')}, "
-              f"conf={parsed.get('confidence')}")
+        print(
+            f"[parse] took {round(time.time()-t0, 2)}s -> {parsed.get('dims')}, "
+            f"conf={parsed.get('confidence')}"
+        )
         return parsed
 
     # fallback for images/unknown
@@ -91,7 +102,7 @@ async def parse(payload: Dict[str, Any]):
 @app.post("/build")
 async def build(spec: Dict[str, Any]):
     try:
-        glb_bytes: bytes = build_glb(spec)  # your mesher returns GLB bytes
+        glb_bytes: bytes = build_glb(spec)  # function provided by your mesher
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"build failed: {e}")
 
